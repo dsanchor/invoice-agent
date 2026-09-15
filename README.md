@@ -1,15 +1,18 @@
 # Invoice Agent
 
-Servicio Python que publica un agente de facturas de Microsoft Agent Framework mediante A2A JSON-RPC. Usa un proveedor compatible con la API de OpenAI y function tools locales sobre datos mock.
+Servicio Python que publica un agente de facturas de Microsoft Agent Framework mediante A2A JSON-RPC. Usa un proveedor compatible con la API de OpenAI y descubre sus tools en un servidor MCP remoto.
 
 ## Configuracion
 
 1. Copia `.env.example` a `.env`.
 2. Configura `OPENAI_MODEL` y la URL compatible con OpenAI publicada por APIM en `OPENAI_BASE_URL`.
 3. Configura en `OPENAI_TOKEN_SCOPE` el scope de la API protegida por APIM, por ejemplo `api://<application-client-id>/.default`.
-4. Inicia sesion con `az login` para desarrollo local.
+4. Configura en `MCP_SERVER_URL` el endpoint Streamable HTTP del servidor MCP, por ejemplo `https://mcp.example.com/mcp`.
+5. Inicia sesion con `az login` para desarrollo local.
 
 El agente obtiene y renueva el JWT mediante `DefaultAzureCredential`. En Azure Container Apps, habilita una identidad administrada y asignale el rol o permiso de aplicacion requerido por la API de APIM. No se necesita `OPENAI_API_KEY`.
+
+El servidor MCP no utiliza autenticacion actualmente. El agente conecta al arrancar, ejecuta `tools/list` y registra las tools remotas; si el MCP no esta disponible, el arranque falla.
 
 `AGENT_PUBLIC_URL` debe ser la URL publica anunciada a los clientes. Cuando APIM este delante del agente, usa por ejemplo `https://<apim>.azure-api.net/a2a/invoice/`.
 
@@ -62,6 +65,7 @@ IMAGE="ghcr.io/dsanchor/invoice-agent:latest"
 OPENAI_MODEL="<model-name>"
 OPENAI_BASE_URL="https://<apim-name>.azure-api.net/<openai-path>/v1"
 OPENAI_TOKEN_SCOPE="api://<application-client-id>/.default"
+MCP_SERVER_URL="https://<mcp-host>/mcp"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 ENVIRONMENT_ID=$(az containerapp env show \
@@ -87,7 +91,8 @@ az containerapp create \
     LOG_LEVEL=INFO \
     OPENAI_MODEL="$OPENAI_MODEL" \
     OPENAI_BASE_URL="$OPENAI_BASE_URL" \
-    OPENAI_TOKEN_SCOPE="$OPENAI_TOKEN_SCOPE"
+    OPENAI_TOKEN_SCOPE="$OPENAI_TOKEN_SCOPE" \
+    MCP_SERVER_URL="$MCP_SERVER_URL"
 ```
 
 Obtiene la URL asignada y actualiza la URL publica anunciada en el Agent Card:

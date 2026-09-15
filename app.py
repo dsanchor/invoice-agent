@@ -2,6 +2,7 @@ import logging
 import os
 import uuid
 from asyncio import CancelledError, to_thread
+from contextlib import asynccontextmanager
 
 import uvicorn
 from a2a.helpers import new_task_from_user_message
@@ -18,7 +19,7 @@ from a2a.types import (
     Part,
     TaskState,
 )
-from agent_framework import Agent
+from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_hosting import AgentState
 from agent_framework_hosting_a2a import a2a_from_run, a2a_to_run
@@ -28,9 +29,6 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
-
-from invoice_data import query_by_invoice_id, query_by_transaction_id, query_invoices
-
 
 load_dotenv()
 logging.basicConfig(
@@ -124,6 +122,7 @@ def create_app() -> Starlette:
     model = os.environ["OPENAI_MODEL"]
     base_url = os.environ["OPENAI_BASE_URL"]
     token_scope = os.environ["OPENAI_TOKEN_SCOPE"]
+    mcp_server_url = os.environ["MCP_SERVER_URL"]
     public_url = os.getenv("AGENT_PUBLIC_URL", "http://localhost:8080/").rstrip("/") + "/"
 
     sync_token_provider = get_bearer_token_provider(
@@ -139,13 +138,26 @@ def create_app() -> Starlette:
         api_key=token_provider,
         base_url=base_url,
     )
+    mcp_tool = MCPStreamableHTTPTool(
+        name="invoice-mcp",
+        url=mcp_server_url,
+    )
     agent = Agent(
         client=client,
         name="InvoiceAgent",
         description="Queries invoice data by company, transaction ID, or invoice ID.",
         instructions=INSTRUCTIONS,
-        tools=[query_invoices, query_by_transaction_id, query_by_invoice_id],
+        tools=[mcp_tool],
     )
+
+    @asynccontextmanager
+    async def lifespan(_: Starlette):
+        await mcp_tool.connect()
+        try:
+            yield
+        finally:
+            await mcp_tool.close()
+
     agent_card = AgentCard(
         name=agent.name,
         description=agent.description,
@@ -172,6 +184,7 @@ def create_app() -> Starlette:
         agent_card=agent_card,
     )
     return Starlette(
+        lifespan=lifespan,
         routes=[
             Route("/health", health, methods=["GET"]),
             *create_agent_card_routes(agent_card),
