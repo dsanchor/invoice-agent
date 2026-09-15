@@ -29,7 +29,11 @@ Endpoints:
 - `GET /.well-known/agent-card.json`
 - `POST /` para A2A JSON-RPC
 
-Hay peticiones de ejemplo en `requests.http`.
+Test:
+
+```bash
+curl -X POST http://localhost:8081/   -H 'Content-Type: application/json'   -H 'A2A-Version: 1.0'   --data-binary '{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"msg-1","parts":[{"text":"Show me all invoices for Contoso"}]}}}'
+```
 
 ## Docker
 
