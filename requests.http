@@ -1,0 +1,30 @@
+@host = http://localhost:8080
+
+### Health probe
+GET {{host}}/health
+
+### A2A AgentCard
+GET {{host}}/.well-known/agent-card.json
+
+### Query invoices through A2A JSON-RPC
+POST {{host}}/
+Content-Type: application/json
+
+{
+  "id": "1",
+  "jsonrpc": "2.0",
+  "method": "message/send",
+  "params": {
+    "message": {
+      "kind": "message",
+      "role": "user",
+      "messageId": "msg-1",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Show me all invoices for Contoso"
+        }
+      ]
+    }
+  }
+}
