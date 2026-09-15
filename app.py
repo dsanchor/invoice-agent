@@ -1,7 +1,7 @@
 import logging
 import os
 import uuid
-from asyncio import CancelledError
+from asyncio import CancelledError, to_thread
 
 import uvicorn
 from a2a.helpers import new_task_from_user_message
@@ -19,10 +19,10 @@ from a2a.types import (
     TaskState,
 )
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework_hosting import AgentState
 from agent_framework_hosting_a2a import a2a_from_run, a2a_to_run
-from azure.identity import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -121,14 +121,23 @@ async def health(_: Request) -> JSONResponse:
 
 
 def create_app() -> Starlette:
-    project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["FOUNDRY_MODEL"]
+    model = os.environ["OPENAI_MODEL"]
+    base_url = os.environ["OPENAI_BASE_URL"]
+    token_scope = os.environ["OPENAI_TOKEN_SCOPE"]
     public_url = os.getenv("AGENT_PUBLIC_URL", "http://localhost:8080/").rstrip("/") + "/"
 
-    client = FoundryChatClient(
-        project_endpoint=project_endpoint,
+    sync_token_provider = get_bearer_token_provider(
+        DefaultAzureCredential(),
+        token_scope,
+    )
+
+    async def token_provider() -> str:
+        return await to_thread(sync_token_provider)
+
+    client = OpenAIChatClient(
         model=model,
-        credential=DefaultAzureCredential(),
+        api_key=token_provider,
+        base_url=base_url,
     )
     agent = Agent(
         client=client,

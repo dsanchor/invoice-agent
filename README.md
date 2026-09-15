@@ -1,14 +1,15 @@
 # Invoice Agent
 
-Servicio Python que publica un agente de facturas de Microsoft Agent Framework mediante A2A JSON-RPC. Usa Microsoft Foundry como proveedor del modelo y function tools locales sobre datos mock.
+Servicio Python que publica un agente de facturas de Microsoft Agent Framework mediante A2A JSON-RPC. Usa un proveedor compatible con la API de OpenAI y function tools locales sobre datos mock.
 
 ## Configuracion
 
 1. Copia `.env.example` a `.env`.
-2. Configura `FOUNDRY_PROJECT_ENDPOINT` y `FOUNDRY_MODEL`.
-3. Inicia sesion con `az login` para desarrollo local.
+2. Configura `OPENAI_MODEL` y la URL compatible con OpenAI publicada por APIM en `OPENAI_BASE_URL`.
+3. Configura en `OPENAI_TOKEN_SCOPE` el scope de la API protegida por APIM, por ejemplo `api://<application-client-id>/.default`.
+4. Inicia sesion con `az login` para desarrollo local.
 
-En Azure Container Apps, habilita una identidad administrada y concedele acceso al proyecto de Foundry. `DefaultAzureCredential` la utilizara automaticamente; no incluyas credenciales en variables ni en la imagen.
+El agente obtiene y renueva el JWT mediante `DefaultAzureCredential`. En Azure Container Apps, habilita una identidad administrada y asignale el rol o permiso de aplicacion requerido por la API de APIM. No se necesita `OPENAI_API_KEY`.
 
 `AGENT_PUBLIC_URL` debe ser la URL publica anunciada a los clientes. Cuando APIM este delante del agente, usa por ejemplo `https://<apim>.azure-api.net/a2a/invoice/`.
 
@@ -39,7 +40,7 @@ docker run --rm -p 8080:8080 \
   invoice-agent:local
 ```
 
-La autenticacion interactiva local no se transmite automaticamente al contenedor. Para una prueba local en Docker configura un mecanismo de credenciales admitido por `DefaultAzureCredential`; en Container Apps utiliza identidad administrada.
+La autenticacion interactiva local no se transmite automaticamente al contenedor. Para pruebas en Docker proporciona una credencial admitida por `DefaultAzureCredential`; en Container Apps utiliza identidad administrada.
 
 ## APIM y produccion
 

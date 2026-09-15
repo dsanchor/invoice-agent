@@ -1,6 +1,7 @@
 a2a-sdk[http-server]==1.1.2
-agent-framework-foundry==1.13.0
+agent-framework-openai==1.13.0
 agent-framework-hosting-a2a==1.0.0a260730
 azure-identity==1.25.0
+debugpy
 python-dotenv==1.1.1
 uvicorn==0.35.0
