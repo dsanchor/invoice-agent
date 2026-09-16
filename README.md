@@ -8,11 +8,12 @@ Servicio Python que publica un agente de facturas de Microsoft Agent Framework m
 2. Configura `OPENAI_MODEL` y la URL compatible con OpenAI publicada por APIM en `OPENAI_BASE_URL`.
 3. Configura en `OPENAI_TOKEN_SCOPE` el scope de la API protegida por APIM, por ejemplo `api://<application-client-id>/.default`.
 4. Configura en `MCP_SERVER_URL` el endpoint Streamable HTTP del servidor MCP, por ejemplo `https://mcp.example.com/mcp`.
-5. Inicia sesion con `az login` para desarrollo local.
+5. Configura en `MCP_TOKEN_SCOPE` el scope de la API MCP protegida, por ejemplo `api://<mcp-application-client-id>/.default`.
+6. Inicia sesion con `az login` para desarrollo local.
 
-El agente obtiene y renueva el JWT mediante `DefaultAzureCredential`. En Azure Container Apps, habilita una identidad administrada y asignale el rol o permiso de aplicacion requerido por la API de APIM. No se necesita `OPENAI_API_KEY`.
+El agente obtiene los JWT mediante `DefaultAzureCredential`. En Azure Container Apps, habilita una identidad administrada y asignale los roles o permisos de aplicacion requeridos por las APIs de OpenAI y MCP. No se necesita `OPENAI_API_KEY`.
 
-El servidor MCP no utiliza autenticacion actualmente. El agente conecta al arrancar, ejecuta `tools/list` y registra las tools remotas; si el MCP no esta disponible, el arranque falla.
+El agente envia `Authorization: Bearer <token>` al servidor MCP. Conecta al arrancar, ejecuta `tools/list` y registra las tools remotas; si el MCP no esta disponible o rechaza el token, el arranque falla.
 
 `AGENT_PUBLIC_URL` debe ser la URL publica anunciada a los clientes. Cuando APIM este delante del agente, usa por ejemplo `https://<apim>.azure-api.net/a2a/invoice/`.
 
@@ -66,6 +67,7 @@ OPENAI_MODEL="<model-name>"
 OPENAI_BASE_URL="https://<apim-name>.azure-api.net/<openai-path>/v1"
 OPENAI_TOKEN_SCOPE="api://<application-client-id>/.default"
 MCP_SERVER_URL="https://<mcp-host>/mcp"
+MCP_TOKEN_SCOPE="api://<mcp-application-client-id>/.default"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 ENVIRONMENT_ID=$(az containerapp env show \
@@ -92,7 +94,8 @@ az containerapp create \
     OPENAI_MODEL="$OPENAI_MODEL" \
     OPENAI_BASE_URL="$OPENAI_BASE_URL" \
     OPENAI_TOKEN_SCOPE="$OPENAI_TOKEN_SCOPE" \
-    MCP_SERVER_URL="$MCP_SERVER_URL"
+    MCP_SERVER_URL="$MCP_SERVER_URL" \
+    MCP_TOKEN_SCOPE="$MCP_TOKEN_SCOPE"
 ```
 
 Obtiene la URL asignada y actualiza la URL publica anunciada en el Agent Card:
@@ -113,7 +116,7 @@ curl --fail "https://$FQDN/health"
 curl --fail "https://$FQDN/.well-known/agent-card.json"
 ```
 
-La identidad administrada debe tener el permiso de aplicacion que APIM valida para `OPENAI_TOKEN_SCOPE`. Puedes obtener su principal ID con:
+La identidad administrada debe tener los permisos de aplicacion que las APIs validan para `OPENAI_TOKEN_SCOPE` y `MCP_TOKEN_SCOPE`. Puedes obtener su principal ID con:
 
 ```bash
 az containerapp identity show \

@@ -121,17 +121,26 @@ async def health(_: Request) -> JSONResponse:
 def create_app() -> Starlette:
     model = os.environ["OPENAI_MODEL"]
     base_url = os.environ["OPENAI_BASE_URL"]
-    token_scope = os.environ["OPENAI_TOKEN_SCOPE"]
+    openai_token_scope = os.environ["OPENAI_TOKEN_SCOPE"]
     mcp_server_url = os.environ["MCP_SERVER_URL"]
+    mcp_token_scope = os.environ["MCP_TOKEN_SCOPE"]
     public_url = os.getenv("AGENT_PUBLIC_URL", "http://localhost:8080/").rstrip("/") + "/"
 
-    sync_token_provider = get_bearer_token_provider(
-        DefaultAzureCredential(),
-        token_scope,
+    credential = DefaultAzureCredential()
+    openai_token_provider = get_bearer_token_provider(
+        credential,
+        openai_token_scope,
+    )
+    mcp_token_provider = get_bearer_token_provider(
+        credential,
+        mcp_token_scope,
     )
 
     async def token_provider() -> str:
-        return await to_thread(sync_token_provider)
+        return await to_thread(openai_token_provider)
+
+    def mcp_header_provider(_: dict[str, object]) -> dict[str, str]:
+        return {"Authorization": f"Bearer {mcp_token_provider()}"}
 
     client = OpenAIChatClient(
         model=model,
@@ -141,6 +150,7 @@ def create_app() -> Starlette:
     mcp_tool = MCPStreamableHTTPTool(
         name="invoice-mcp",
         url=mcp_server_url,
+        header_provider=mcp_header_provider,
     )
     agent = Agent(
         client=client,
@@ -157,6 +167,7 @@ def create_app() -> Starlette:
             yield
         finally:
             await mcp_tool.close()
+            credential.close()
 
     agent_card = AgentCard(
         name=agent.name,
