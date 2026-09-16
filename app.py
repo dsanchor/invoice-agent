@@ -2,8 +2,10 @@ import logging
 import os
 import uuid
 from asyncio import CancelledError, to_thread
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 
+import httpx
 import uvicorn
 from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -42,6 +44,18 @@ INSTRUCTIONS = """You are an invoice specialist.
 Use the available tools for every invoice lookup. Never invent invoice data.
 If no invoice matches, say so clearly. Keep monetary amounts and identifiers exact.
 """
+
+
+class AzureBearerAuth(httpx.Auth):
+    def __init__(self, token_provider: Callable[[], str]) -> None:
+        self.token_provider = token_provider
+
+    async def async_auth_flow(
+        self, request: httpx.Request
+    ) -> AsyncGenerator[httpx.Request, None]:
+        token = await to_thread(self.token_provider)
+        request.headers["Authorization"] = f"Bearer {token}"
+        yield request
 
 
 class InvoiceAgentExecutor(AgentExecutor):
@@ -139,18 +153,16 @@ def create_app() -> Starlette:
     async def token_provider() -> str:
         return await to_thread(openai_token_provider)
 
-    def mcp_header_provider(_: dict[str, object]) -> dict[str, str]:
-        return {"Authorization": f"Bearer {mcp_token_provider()}"}
-
     client = OpenAIChatClient(
         model=model,
         api_key=token_provider,
         base_url=base_url,
     )
+    mcp_http_client = httpx.AsyncClient(auth=AzureBearerAuth(mcp_token_provider))
     mcp_tool = MCPStreamableHTTPTool(
         name="invoice-mcp",
         url=mcp_server_url,
-        header_provider=mcp_header_provider,
+        http_client=mcp_http_client,
     )
     agent = Agent(
         client=client,
@@ -162,11 +174,12 @@ def create_app() -> Starlette:
 
     @asynccontextmanager
     async def lifespan(_: Starlette):
-        await mcp_tool.connect()
         try:
+            await mcp_tool.connect()
             yield
         finally:
             await mcp_tool.close()
+            await mcp_http_client.aclose()
             credential.close()
 
     agent_card = AgentCard(
