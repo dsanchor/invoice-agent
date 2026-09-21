@@ -1,12 +1,13 @@
 import logging
 import os
 import uuid
-from asyncio import CancelledError, to_thread
+from asyncio import CancelledError, timeout, to_thread
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
+from openai import AsyncOpenAI, RateLimitError
 from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -47,19 +48,9 @@ If no invoice matches, say so clearly. Keep monetary amounts and identifiers exa
 
 
 def caller_model_headers(context: RequestContext) -> dict[str, str]:
-    headers = context.call_context.state.get("headers", {})
-    raw_user_id = headers.get("userid")
-    raw_upn = headers.get("upn")
-    user_id = raw_user_id.strip() if raw_user_id else ""
-    upn = raw_upn.strip() if raw_upn else ""
-    logger.info(
-        "A2A request headers received names=%s raw_caller_headers=%s",
-        sorted(headers),
-        {
-            "userId": raw_user_id,
-            "upn": raw_upn,
-        },
-    )
+    headers = context.call_context.headers if context.call_context else {}
+    user_id = headers.get("userid", "").strip()
+    upn = headers.get("upn", "").strip()
 
     if user_id:
         try:
@@ -90,8 +81,13 @@ class AzureBearerAuth(httpx.Auth):
 
 
 class InvoiceAgentExecutor(AgentExecutor):
-    def __init__(self, state: AgentState[Agent]) -> None:
+    def __init__(
+        self,
+        state: AgentState[Agent],
+        execution_timeout_seconds: float,
+    ) -> None:
         self.state = state
+        self.execution_timeout_seconds = execution_timeout_seconds
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         if context.context_id is None:
@@ -111,58 +107,83 @@ class InvoiceAgentExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, task.id, context.context_id)
         await updater.submit()
         try:
-            await updater.start_work()
-            run = a2a_to_run(context.message, stream=True, input_modes=["text"])
-            model_headers = caller_model_headers(context)
-            logger.info(
-                "Model request headers prepared headers=%s",
-                model_headers,
-            )
-            agent = await self.state.get_target()
-            session_id = f"a2a:{context.tenant}:{context.context_id}"
-            session = await self.state.get_or_create_session(session_id)
-            stream = agent.run(
-                run["messages"],
-                session=session,
-                options=run["options"],
-                stream=True,
-                client_kwargs=(
-                    {"extra_headers": model_headers} if model_headers else None
-                ),
-            )
-
-            default_artifact_id = uuid.uuid4().hex
-            artifact_ids: set[str] = set()
-            async for update in stream:
-                parts = a2a_from_run(update, output_modes=["text"])
-                if not parts:
-                    continue
-                artifact_id = update.message_id or default_artifact_id
-                await updater.add_artifact(
-                    parts=parts,
-                    artifact_id=artifact_id,
-                    append=True if artifact_id in artifact_ids else None,
+            async with timeout(self.execution_timeout_seconds):
+                await updater.start_work()
+                run = a2a_to_run(context.message, stream=True, input_modes=["text"])
+                model_headers = caller_model_headers(context)
+                if model_headers:
+                    options = dict(run["options"])
+                    options["extra_headers"] = {
+                        **dict(options.get("extra_headers") or {}),
+                        **model_headers,
+                    }
+                    run["options"] = options
+                agent = await self.state.get_target()
+                session_id = f"a2a:{context.tenant}:{context.context_id}"
+                session = await self.state.get_or_create_session(session_id)
+                stream = agent.run(
+                    run["messages"],
+                    session=session,
+                    options=run["options"],
+                    stream=True,
                 )
-                artifact_ids.add(artifact_id)
 
-            final_response = await stream.get_final_response()
-            if not artifact_ids:
-                parts = a2a_from_run(final_response, output_modes=["text"])
-                if parts:
-                    await updater.update_status(
-                        state=TaskState.TASK_STATE_WORKING,
-                        message=updater.new_agent_message(parts),
+                default_artifact_id = uuid.uuid4().hex
+                artifact_ids: set[str] = set()
+                async for update in stream:
+                    parts = a2a_from_run(update, output_modes=["text"])
+                    if not parts:
+                        continue
+                    artifact_id = update.message_id or default_artifact_id
+                    await updater.add_artifact(
+                        parts=parts,
+                        artifact_id=artifact_id,
+                        append=True if artifact_id in artifact_ids else None,
                     )
-            await self.state.set_session(session_id, session)
-            await updater.complete()
+                    artifact_ids.add(artifact_id)
+
+                final_response = await stream.get_final_response()
+                if not artifact_ids:
+                    parts = a2a_from_run(final_response, output_modes=["text"])
+                    if parts:
+                        await updater.update_status(
+                            state=TaskState.TASK_STATE_WORKING,
+                            message=updater.new_agent_message(parts),
+                        )
+                await self.state.set_session(session_id, session)
+                await updater.complete()
         except CancelledError:
             await updater.update_status(state=TaskState.TASK_STATE_CANCELED)
-        except Exception:
+        except TimeoutError as error:
+            logger.warning(
+                "Invoice agent execution timed out after %.1f seconds",
+                self.execution_timeout_seconds,
+            )
+            await updater.update_status(
+                state=TaskState.TASK_STATE_FAILED,
+                message=updater.new_agent_message(
+                    [
+                        Part(
+                            text=str(error)
+                            or "Invoice service timed out. Please try again."
+                        )
+                    ]
+                ),
+            )
+        except RateLimitError as error:
+            logger.warning("Invoice agent model request was rate limited: %s", error)
+            await updater.update_status(
+                state=TaskState.TASK_STATE_FAILED,
+                message=updater.new_agent_message(
+                    [Part(text=str(error) or "The model request was rate limited.")]
+                ),
+            )
+        except Exception as error:
             logger.exception("Invoice agent execution failed")
             await updater.update_status(
                 state=TaskState.TASK_STATE_FAILED,
                 message=updater.new_agent_message(
-                    [Part(text="Invoice agent execution failed.")]
+                    [Part(text=str(error) or error.__class__.__name__)]
                 ),
             )
 
@@ -177,6 +198,10 @@ def create_app() -> Starlette:
     openai_token_scope = os.environ["OPENAI_TOKEN_SCOPE"]
     mcp_server_url = os.environ["MCP_SERVER_URL"]
     mcp_token_scope = os.environ["MCP_TOKEN_SCOPE"]
+    openai_timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))
+    openai_max_retries = int(os.getenv("OPENAI_MAX_RETRIES", "0"))
+    mcp_timeout_seconds = float(os.getenv("MCP_TIMEOUT_SECONDS", "15"))
+    agent_timeout_seconds = float(os.getenv("AGENT_TIMEOUT_SECONDS", "75"))
     public_url = os.getenv("AGENT_PUBLIC_URL", "http://localhost:8080/").rstrip("/") + "/"
 
     credential = DefaultAzureCredential()
@@ -192,16 +217,25 @@ def create_app() -> Starlette:
     async def token_provider() -> str:
         return await to_thread(openai_token_provider)
 
-    client = OpenAIChatClient(
-        model=model,
+    openai_client = AsyncOpenAI(
         api_key=token_provider,
         base_url=base_url,
+        timeout=openai_timeout_seconds,
+        max_retries=openai_max_retries,
     )
-    mcp_http_client = httpx.AsyncClient(auth=AzureBearerAuth(mcp_token_provider))
+    client = OpenAIChatClient(
+        model=model,
+        async_client=openai_client,
+    )
+    mcp_http_client = httpx.AsyncClient(
+        auth=AzureBearerAuth(mcp_token_provider),
+        timeout=mcp_timeout_seconds,
+    )
     mcp_tool = MCPStreamableHTTPTool(
         name="invoice-mcp",
         url=mcp_server_url,
         http_client=mcp_http_client,
+        request_timeout=mcp_timeout_seconds,
     )
     agent = Agent(
         client=client,
@@ -219,6 +253,7 @@ def create_app() -> Starlette:
         finally:
             await mcp_tool.close()
             await mcp_http_client.aclose()
+            await openai_client.close()
             credential.close()
 
     agent_card = AgentCard(
@@ -242,7 +277,10 @@ def create_app() -> Starlette:
         ],
     )
     request_handler = DefaultRequestHandler(
-        agent_executor=InvoiceAgentExecutor(AgentState(agent)),
+        agent_executor=InvoiceAgentExecutor(
+            AgentState(agent),
+            execution_timeout_seconds=agent_timeout_seconds,
+        ),
         task_store=InMemoryTaskStore(),
         agent_card=agent_card,
     )
