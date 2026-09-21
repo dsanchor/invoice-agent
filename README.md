@@ -69,6 +69,63 @@ curl -X POST http://localhost:8081/ \
   --data-binary '{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"msg-1","parts":[{"text":"Show me all invoices for Contoso"}]}}}'
 ```
 
+## Cliente A2A streaming
+
+`a2a_streaming_client.py` resuelve el Agent Card y muestra cada fragmento de texto conforme llega. Los headers HTTP se pasan repitiendo `--header`:
+
+```bash
+python a2a_streaming_client.py \
+  --url http://localhost:8080 \
+  --message "Show me all invoices for Contoso" \
+  --header "userId=85fe7f9c-91d0-4a87-a761-1d46d7aff925" \
+  --header "upn=user@contoso.com"
+```
+
+Por defecto el cliente obtiene el Agent Card desde `/.well-known/agent-card.json`. Para utilizar `/agent-card.json`:
+
+```bash
+python a2a_streaming_client.py \
+  --url http://localhost:8080 \
+  --agent-card-path /agent-card.json \
+  --message "Show me all invoices for Contoso"
+```
+
+Si APIM no publica el Agent Card, `--skip-agent-card` evita la descarga y trata `--url` directamente como endpoint A2A JSON-RPC con streaming:
+
+```bash
+export A2A_BEARER_TOKEN="<access-token>"
+
+python a2a_streaming_client.py \
+  --url https://<apim-name>.azure-api.net/invoice-agent \
+  --skip-agent-card \
+  --message "Show me all invoices for Contoso" \
+  --bearer-token-env A2A_BEARER_TOKEN
+```
+
+Este modo omite el descubrimiento y la validacion de capacidades del servidor; presupone que el endpoint utiliza JSON-RPC y soporta streaming.
+
+Para enviar `Authorization: Bearer`, guarda el token en una variable de entorno para evitar escribirlo directamente en el historial del shell:
+
+```bash
+export A2A_BEARER_TOKEN="<access-token>"
+
+python a2a_streaming_client.py \
+  --url https://<apim-name>.azure-api.net/a2a/invoice \
+  --message "Show me all invoices for Contoso" \
+  --bearer-token-env A2A_BEARER_TOKEN
+```
+
+Tambien se admite un header explicito:
+
+```bash
+python a2a_streaming_client.py \
+  --url https://<apim-name>.azure-api.net/a2a/invoice \
+  --message "Show me all invoices for Contoso" \
+  --header "Authorization=Bearer <access-token>"
+```
+
+La opcion `--bearer-token-env` es preferible porque un token incluido directamente en los argumentos puede quedar visible en el historial o en la lista de procesos.
+
 ## Docker
 
 ```bash
