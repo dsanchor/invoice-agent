@@ -47,7 +47,7 @@ If no invoice matches, say so clearly. Keep monetary amounts and identifiers exa
 
 
 def caller_model_headers(context: RequestContext) -> dict[str, str]:
-    headers = context.call_context.headers if context.call_context else {}
+    headers = context.call_context.state.get("headers", {})
     user_id = headers.get("userid", "").strip()
     upn = headers.get("upn", "").strip()
 
