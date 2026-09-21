@@ -49,22 +49,6 @@ retry the same tool call.
 """
 
 
-def rate_limit_message(error: RateLimitError) -> str:
-    body = error.body
-    if isinstance(body, dict):
-        message = body.get("message")
-        if isinstance(message, str) and message.strip():
-            return f"The model is temporarily rate limited. {message.strip()}"
-
-    retry_after = error.response.headers.get("retry-after")
-    if retry_after:
-        return (
-            "The model is temporarily rate limited. "
-            f"Please try again in {retry_after} seconds."
-        )
-    return "The model is temporarily rate limited. Please try again shortly."
-
-
 def caller_model_headers(context: RequestContext) -> dict[str, str]:
     headers = context.call_context.state.get("headers", {})
     raw_user_id = headers.get("userid")
@@ -182,59 +166,14 @@ class InvoiceAgentExecutor(AgentExecutor):
                 await updater.complete()
         except CancelledError:
             await updater.update_status(state=TaskState.TASK_STATE_CANCELED)
-        except TimeoutError:
-            logger.warning(
-                "Invoice agent execution timed out after %.1f seconds",
-                self.execution_timeout_seconds,
-            )
-            await updater.update_status(
-                state=TaskState.TASK_STATE_FAILED,
-                message=updater.new_agent_message(
-                    [
-                        Part(
-                            text=(
-                                "The invoice request timed out. "
-                                "Please try again shortly."
-                            )
-                        )
-                    ]
-                ),
-            )
-        except RateLimitError as error:
-            logger.warning(
-                "Invoice agent model request was rate limited status_code=%s",
-                error.status_code,
-            )
-            await updater.update_status(
-                state=TaskState.TASK_STATE_FAILED,
-                message=updater.new_agent_message(
-                    [Part(text=rate_limit_message(error))]
-                ),
-            )
-        except httpx.HTTPError as error:
-            logger.warning(
-                "Invoice agent upstream connection failed error_type=%s",
-                type(error).__name__,
-            )
-            await updater.update_status(
-                state=TaskState.TASK_STATE_FAILED,
-                message=updater.new_agent_message(
-                    [
-                        Part(
-                            text=(
-                                "The invoice service is temporarily unavailable. "
-                                "Please try again shortly."
-                            )
-                        )
-                    ]
-                ),
-            )
-        except Exception:
+        except Exception as error:
             logger.exception("Invoice agent execution failed")
+            error_message = str(error).strip() or type(error).__name__
+
             await updater.update_status(
                 state=TaskState.TASK_STATE_FAILED,
                 message=updater.new_agent_message(
-                    [Part(text="Invoice agent execution failed.")]
+                    [Part(text=f"Invoice agent execution failed: {error_message}")]
                 ),
             )
 
