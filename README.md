@@ -17,6 +17,18 @@ El agente envia `Authorization: Bearer <token>` al servidor MCP. Conecta al arra
 
 `AGENT_PUBLIC_URL` debe ser la URL publica anunciada a los clientes. Cuando APIM este delante del agente, usa por ejemplo `https://<apim>.azure-api.net/a2a/invoice/`.
 
+Los limites de espera y de llamadas se pueden ajustar con:
+
+- `OPENAI_TIMEOUT_SECONDS` (30): timeout de cada llamada al modelo.
+- `OPENAI_MAX_RETRIES` (0): reintentos internos del SDK ante 429 y otros errores transitorios.
+- `MCP_TIMEOUT_SECONDS` (15): timeout de cada llamada MCP.
+- `AGENT_TIMEOUT_SECONDS` (45): limite total de una ejecucion A2A.
+- `AGENT_MAX_MODEL_ROUNDTRIPS` (6): maximo de rondas modelo/tools.
+- `AGENT_MAX_TOOL_CALLS` (6): maximo total de llamadas a tools.
+- `AGENT_MAX_CONSECUTIVE_TOOL_ERRORS` (1): errores consecutivos de tools antes de abandonar el bucle.
+
+Al alcanzar un timeout, recibir un 429 del modelo o fallar una conexion upstream, la tarea A2A termina en estado `failed` con un mensaje apto para el cliente. Los detalles tecnicos permanecen en los logs.
+
 ## Ejecucion local
 
 ```bash
