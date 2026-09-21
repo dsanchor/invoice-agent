@@ -120,6 +120,58 @@ def text_parts(parts: Sequence[Part]) -> str:
     )
 
 
+def find_http_status_error(error: BaseException) -> httpx.HTTPStatusError | None:
+    pending = [error]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
+        if isinstance(current, httpx.HTTPStatusError):
+            return current
+        pending.extend(
+            nested
+            for nested in (current.__cause__, current.__context__)
+            if nested is not None
+        )
+    return None
+
+
+def json_error_message(payload: object) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+
+    nested_error = payload.get("error")
+    if isinstance(nested_error, str) and nested_error.strip():
+        return nested_error.strip()
+    if isinstance(nested_error, dict):
+        nested_message = nested_error.get("message")
+        if isinstance(nested_message, str) and nested_message.strip():
+            return nested_message.strip()
+    return None
+
+
+def client_error_message(error: BaseException) -> str:
+    status_error = find_http_status_error(error)
+    if status_error is None:
+        return f"{type(error).__name__}: {error}"
+
+    response = status_error.response
+    try:
+        message = json_error_message(response.json())
+    except ValueError:
+        message = None
+
+    if message:
+        return f"HTTP {response.status_code}: {message}"
+    return f"HTTP {response.status_code}: {response.reason_phrase}"
+
+
 async def stream_message(args: argparse.Namespace) -> int:
     headers = dict(args.header)
     async with httpx.AsyncClient(
@@ -203,7 +255,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(stream_message(args))
     except (A2AClientError, httpx.HTTPError) as error:
         print(
-            f"A2A request failed: {type(error).__name__}: {error}",
+            f"A2A request failed: {client_error_message(error)}",
             file=sys.stderr,
         )
         return 1
