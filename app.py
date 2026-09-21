@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import uuid
@@ -46,10 +47,25 @@ If no invoice matches, say so clearly. Keep monetary amounts and identifiers exa
 """
 
 
+def header_trace(value: str) -> str:
+    if not value:
+        return "absent"
+    fingerprint = hashlib.sha256(value.encode()).hexdigest()[:12]
+    return f"present(length={len(value)}, sha256={fingerprint})"
+
+
 def caller_model_headers(context: RequestContext) -> dict[str, str]:
     headers = context.call_context.state.get("headers", {})
     user_id = headers.get("userid", "").strip()
     upn = headers.get("upn", "").strip()
+    logger.info(
+        "A2A request headers received names=%s caller_headers=%s",
+        sorted(headers),
+        {
+            "userId": header_trace(user_id),
+            "upn": header_trace(upn),
+        },
+    )
 
     if user_id:
         try:
@@ -104,6 +120,13 @@ class InvoiceAgentExecutor(AgentExecutor):
             await updater.start_work()
             run = a2a_to_run(context.message, stream=True, input_modes=["text"])
             model_headers = caller_model_headers(context)
+            logger.info(
+                "Model request headers prepared headers=%s",
+                {
+                    name: header_trace(value)
+                    for name, value in model_headers.items()
+                },
+            )
             agent = await self.state.get_target()
             session_id = f"a2a:{context.tenant}:{context.context_id}"
             session = await self.state.get_or_create_session(session_id)
