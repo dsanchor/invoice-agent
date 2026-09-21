@@ -104,13 +104,6 @@ class InvoiceAgentExecutor(AgentExecutor):
             await updater.start_work()
             run = a2a_to_run(context.message, stream=True, input_modes=["text"])
             model_headers = caller_model_headers(context)
-            if model_headers:
-                options = dict(run["options"])
-                options["extra_headers"] = {
-                    **dict(options.get("extra_headers") or {}),
-                    **model_headers,
-                }
-                run["options"] = options
             agent = await self.state.get_target()
             session_id = f"a2a:{context.tenant}:{context.context_id}"
             session = await self.state.get_or_create_session(session_id)
@@ -119,6 +112,9 @@ class InvoiceAgentExecutor(AgentExecutor):
                 session=session,
                 options=run["options"],
                 stream=True,
+                client_kwargs=(
+                    {"extra_headers": model_headers} if model_headers else None
+                ),
             )
 
             default_artifact_id = uuid.uuid4().hex
