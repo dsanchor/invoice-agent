@@ -9,6 +9,8 @@ GET {{host}}/.well-known/agent-card.json
 ### Query invoices through A2A JSON-RPC
 POST {{host}}/
 Content-Type: application/json
+userId: 85fe7f9c-91d0-4a87-a761-1d46d7aff925
+upn: user@contoso.com
 
 {
   "id": "1",

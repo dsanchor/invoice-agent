@@ -46,6 +46,27 @@ If no invoice matches, say so clearly. Keep monetary amounts and identifiers exa
 """
 
 
+def caller_model_headers(context: RequestContext) -> dict[str, str]:
+    headers = context.call_context.headers if context.call_context else {}
+    user_id = headers.get("userid", "").strip()
+    upn = headers.get("upn", "").strip()
+
+    if user_id:
+        try:
+            user_id = str(uuid.UUID(user_id))
+        except ValueError:
+            logger.warning("Ignoring invalid userId header")
+            user_id = ""
+    if len(upn) > 320 or any(character in upn for character in "\r\n"):
+        logger.warning("Ignoring invalid upn header")
+        upn = ""
+    return {
+        key: value
+        for key, value in (("userId", user_id), ("upn", upn))
+        if value
+    }
+
+
 class AzureBearerAuth(httpx.Auth):
     def __init__(self, token_provider: Callable[[], str]) -> None:
         self.token_provider = token_provider
@@ -82,6 +103,14 @@ class InvoiceAgentExecutor(AgentExecutor):
         try:
             await updater.start_work()
             run = a2a_to_run(context.message, stream=True, input_modes=["text"])
+            model_headers = caller_model_headers(context)
+            if model_headers:
+                options = dict(run["options"])
+                options["extra_headers"] = {
+                    **dict(options.get("extra_headers") or {}),
+                    **model_headers,
+                }
+                run["options"] = options
             agent = await self.state.get_target()
             session_id = f"a2a:{context.tenant}:{context.context_id}"
             session = await self.state.get_or_create_session(session_id)

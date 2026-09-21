@@ -33,10 +33,28 @@ Endpoints:
 - `GET /.well-known/agent-card.json`
 - `POST /` para A2A JSON-RPC
 
+El endpoint acepta opcionalmente los headers `userId` y `upn`. Cuando estan presentes, el agente los reenvia como headers HTTP de la llamada al endpoint OpenAI mediante las opciones de cada ejecucion; no se incluyen en los mensajes del prompt. `userId` debe ser un GUID valido y `upn` no puede superar 320 caracteres; valores invalidos se ignoran.
+
+En produccion, APIM debe eliminar o sobrescribir ambos headers despues de validar el JWT. El agente no debe confiar en valores enviados directamente por el cliente:
+
+```xml
+<set-header name="userId" exists-action="override">
+  <value>@(((Jwt)context.Variables["jwt"]).Claims["oid"].FirstOrDefault())</value>
+</set-header>
+<set-header name="upn" exists-action="override">
+  <value>@(((Jwt)context.Variables["jwt"]).Claims["upn"].FirstOrDefault())</value>
+</set-header>
+```
+
 Test:
 
 ```bash
-curl -X POST http://localhost:8081/   -H 'Content-Type: application/json'   -H 'A2A-Version: 1.0'   --data-binary '{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"msg-1","parts":[{"text":"Show me all invoices for Contoso"}]}}}'
+curl -X POST http://localhost:8081/ \
+  -H 'Content-Type: application/json' \
+  -H 'A2A-Version: 1.0' \
+  -H 'userId: 85fe7f9c-91d0-4a87-a761-1d46d7aff925' \
+  -H 'upn: user@contoso.com' \
+  --data-binary '{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"msg-1","parts":[{"text":"Show me all invoices for Contoso"}]}}}'
 ```
 
 ## Docker
